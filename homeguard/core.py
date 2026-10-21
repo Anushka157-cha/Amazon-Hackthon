@@ -246,6 +246,9 @@ class HomeGuardEngine:
         self.active_fail_verification = False
         for dev in self.devices.values():
             dev.status = "online"
+        for inc in self.incidents.values():
+            if inc.state == "PROPOSED":
+                inc.state = "REJECTED"
         result = {"status": "all_online", "simulated": True}
         self._log_action(actor=actor, action="clear_failures", target="home", result=result)
         return result

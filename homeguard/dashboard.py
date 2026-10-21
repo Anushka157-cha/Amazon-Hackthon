@@ -71,6 +71,15 @@ class ProposeFixRequest(BaseModel):
     simulate_verification_failure: bool = False
 
 
+class TVApproveBody(BaseModel):
+    incident_id: str | None = None
+    user_confirmed: bool = True
+
+
+class TVRollbackBody(BaseModel):
+    incident_id: str | None = None
+
+
 @app.get("/api/status")
 def get_system_status() -> dict[str, Any]:
     """Return device graph, root cause diagnosis, active incidents, and audit log."""
@@ -78,13 +87,207 @@ def get_system_status() -> dict[str, Any]:
     diagnosis = default_engine.diagnose_home()
     audit_log = default_engine.get_audit_log(limit=40)
     incidents = {k: v.to_dict() for k, v in default_engine.incidents.items()}
+    dependency_graph = {
+        dev_id: {
+            "upstream": dev.get("upstream", []),
+            "downstream": dev.get("downstream", []),
+        }
+        for dev_id, dev in devices.items()
+    }
 
     return {
         "simulated": True,
         "devices": devices,
+        "dependency_graph": dependency_graph,
         "diagnosis": diagnosis,
         "incidents": incidents,
         "audit_log": audit_log,
+    }
+
+
+@app.get("/api/diagnosis")
+def get_diagnosis() -> dict[str, Any]:
+    """Return root cause, victims, confidence, and plain-language summary."""
+    diag = default_engine.diagnose_home()
+    return {
+        "simulated": True,
+        "has_incident": diag.get("has_incident", False),
+        "root_cause": diag.get("root_cause"),
+        "root_cause_name": diag.get("root_cause_name"),
+        "root_cause_status": diag.get("root_cause_status"),
+        "victims": diag.get("victims", []),
+        "victim_names": diag.get("victim_names", []),
+        "confidence": diag.get("confidence", 1.0),
+        "summary": diag.get("explanation", ""),
+        "explanation": diag.get("explanation", ""),
+        "spoken": diag.get("spoken", ""),
+    }
+
+
+@app.get("/api/proposal")
+def get_proposal() -> dict[str, Any]:
+    """Return proposed fix + impact (devices affected, duration, tier)."""
+    # Check if there is already an active proposed incident
+    proposed_incidents = [
+        inc for inc in default_engine.incidents.values() if inc.state == "PROPOSED"
+    ]
+    diag = default_engine.diagnose_home()
+
+    if proposed_incidents:
+        inc = proposed_incidents[-1]
+        impact = inc.impact
+        return {
+            "simulated": True,
+            "has_proposal": True,
+            "incident_id": inc.incident_id,
+            "target_device": inc.target_device,
+            "action": inc.action,
+            "proposed_fix": f"{inc.action} {inc.target_device}",
+            "state": inc.state,
+            "impact": impact,
+            "devices_affected": impact.get("affected_devices", []),
+            "affected_device_names": impact.get("affected_device_names", []),
+            "duration": impact.get("duration_seconds", 0),
+            "duration_seconds": impact.get("duration_seconds", 0),
+            "tier": impact.get("tier", "LOW"),
+            "confirmation_required": True,
+            "description": impact.get("description", ""),
+        }
+
+    # If an incident exists but hasn't been proposed yet, propose one
+    if diag.get("has_incident") and diag.get("root_cause"):
+        prop = default_engine.propose_fix(actor="system")
+        impact = prop.get("impact", {})
+        return {
+            "simulated": True,
+            "has_proposal": True,
+            "incident_id": prop.get("incident_id"),
+            "target_device": prop.get("target_device"),
+            "action": prop.get("action"),
+            "proposed_fix": f"{prop.get('action')} {prop.get('target_device')}",
+            "state": "PROPOSED",
+            "impact": impact,
+            "devices_affected": impact.get("affected_devices", []),
+            "affected_device_names": impact.get("affected_device_names", []),
+            "duration": impact.get("duration_seconds", 0),
+            "duration_seconds": impact.get("duration_seconds", 0),
+            "tier": impact.get("tier", "LOW"),
+            "confirmation_required": True,
+            "description": impact.get("description", ""),
+            "spoken": prop.get("spoken", ""),
+        }
+
+    return {
+        "simulated": True,
+        "has_proposal": False,
+        "incident_id": None,
+        "target_device": None,
+        "action": None,
+        "proposed_fix": None,
+        "state": "NO_INCIDENT",
+        "impact": None,
+        "devices_affected": [],
+        "affected_device_names": [],
+        "duration": 0,
+        "duration_seconds": 0,
+        "tier": None,
+        "confirmation_required": False,
+        "message": "All devices online. No fix proposed.",
+    }
+
+
+@app.post("/api/approve")
+def approve_fix_tv(req: TVApproveBody | None = None) -> dict[str, Any]:
+    """Execute the fix ONLY if a proposal exists and user_confirmed=true."""
+    user_confirmed = req.user_confirmed if req is not None else True
+    inc_id = req.incident_id if req is not None else None
+
+    diag = default_engine.diagnose_home()
+    # If no incident_id supplied, locate the current PROPOSED incident
+    if not inc_id:
+        proposed_incidents = [
+            inc for inc in default_engine.incidents.values() if inc.state == "PROPOSED"
+        ]
+        if not proposed_incidents or not diag.get("has_incident"):
+            result = {
+                "simulated": True,
+                "incident_id": None,
+                "executed": False,
+                "error": "NO_PROPOSAL",
+                "message": "Cannot approve fix: no proposed fix exists. Propose first.",
+                "spoken": "I couldn't find a proposed fix to approve.",
+            }
+            default_engine._log_action(
+                actor="user_tv", action="approve_fix_refused", target="none", result=result
+            )
+            return result
+        inc_id = proposed_incidents[-1].incident_id
+
+    # Call core approve_fix (enforces user_confirmed and state == PROPOSED)
+    res = default_engine.approve_fix(
+        incident_id=inc_id,
+        user_confirmed=user_confirmed,
+        actor="user_tv",
+    )
+
+    # If execution succeeded, also run stabilization verification
+    if res.get("executed"):
+        ver = default_engine.verify_fix(
+            incident_id=inc_id,
+            consecutive_ticks=3,
+            actor="system",
+        )
+        res["verification"] = ver
+        res["verified"] = ver.get("verified", False)
+        res["auto_rollback"] = ver.get("auto_rollback", False)
+        if ver.get("auto_rollback"):
+            res["message"] = (
+                "Simulated fix executed but verification failed. Auto-rolled back to previous state."
+            )
+        else:
+            res["message"] = (
+                "Simulated fix executed and verified successfully across 3 ticks."
+            )
+
+    return res
+
+
+@app.post("/api/rollback")
+def rollback_fix_tv(req: TVRollbackBody | None = None) -> dict[str, Any]:
+    """Restore pre-fix snapshot."""
+    inc_id = req.incident_id if req is not None else None
+
+    if not inc_id:
+        eligible = [
+            inc for inc in default_engine.incidents.values() if inc.pre_fix_snapshot is not None
+        ]
+        if not eligible:
+            result = {
+                "simulated": True,
+                "incident_id": None,
+                "rolled_back": False,
+                "error": "NO_SNAPSHOT",
+                "message": "No executed fix found to rollback.",
+                "spoken": "There is no previous state to restore.",
+            }
+            default_engine._log_action(
+                actor="user_tv", action="rollback_refused", target="none", result=result
+            )
+            return result
+        inc_id = eligible[-1].incident_id
+
+    return default_engine.rollback_fix(incident_id=inc_id, actor="user_tv")
+
+
+@app.get("/api/audit")
+def get_audit_trail() -> dict[str, Any]:
+    """Return the last 20 audit entries."""
+    entries = default_engine.get_audit_log(limit=20)
+    return {
+        "simulated": True,
+        "count": len(entries),
+        "entries": entries,
+        "audit_log": entries,
     }
 
 
