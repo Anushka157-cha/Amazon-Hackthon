@@ -153,3 +153,14 @@ async def test_manual_rollback_tool(test_setup):
     assert "restored your devices" in rb["spoken"]
     devices = engine.get_devices()
     assert devices[DEVICE_WIFI_EXTENDER]["status"] == "offline"
+
+
+@pytest.mark.asyncio
+async def test_reject_unknown_device_and_action_mcp(test_setup):
+    mcp_server, engine = test_setup
+    with pytest.raises(ValueError, match="Unknown simulated device"):
+        engine.inject_failure("unknown_thermostat", mode="offline")
+
+    with pytest.raises(ValueError, match="Unknown fix action"):
+        engine.estimate_fix_impact(DEVICE_WIFI_EXTENDER, action="factory_reset")
+
