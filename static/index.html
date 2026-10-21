@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HomeGuard - The Smart Home That Explains Itself (Simulated)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0e17;
+      --card-bg: rgba(20, 27, 45, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-hover: rgba(30, 41, 69, 0.9);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-blue: #38bdf8;
+      --accent-purple: #818cf8;
+      --status-green: #10b981;
+      --status-green-glow: rgba(16, 185, 129, 0.35);
+      --status-yellow: #f59e0b;
+      --status-yellow-glow: rgba(245, 158, 11, 0.35);
+      --status-red: #ef4444;
+      --status-red-glow: rgba(239, 68, 68, 0.4);
+      --glow-cyan: rgba(56, 189, 248, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(129, 140, 248, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    /* Top Bar */
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 0 20px var(--glow-cyan);
+    }
+
+    .brand-text h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-text p {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .badges {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .sim-badge {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 0 12px var(--status-yellow-glow);
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 6px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--card-border);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--status-green);
+      box-shadow: 0 0 8px var(--status-green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    /* Grid Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Card Panels */
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    /* Graph Tree */
+    .graph-tree {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 10px 0;
+      position: relative;
+    }
+
+    .node-row {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .device-node {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 16px;
+      min-width: 175px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .device-node.root-cause {
+      border: 2px solid var(--status-red);
+      background: rgba(239, 68, 68, 0.12);
+      box-shadow: 0 0 24px var(--status-red-glow);
+      animation: alertPulse 2s infinite alternate;
+    }
+
+    .device-node.victim {
+      border: 1.5px solid var(--status-yellow);
+      background: rgba(245, 158, 11, 0.08);
+      box-shadow: 0 0 16px var(--status-yellow-glow);
+    }
+
+    .device-node.healthy {
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    @keyframes alertPulse {
+      0% { box-shadow: 0 0 12px var(--status-red-glow); }
+      100% { box-shadow: 0 0 28px rgba(239, 68, 68, 0.6); }
+    }
+
+    .node-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .node-icon {
+      font-size: 20px;
+    }
+
+    .node-status-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .status-online {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .status-degraded {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .status-offline {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .node-name {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .node-role-tag {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-top: 6px;
+    }
+
+    .role-root-cause {
+      background: var(--status-red);
+      color: #fff;
+    }
+
+    .role-victim {
+      background: rgba(245, 158, 11, 0.25);
+      color: #fbbf24;
+    }
+
+    .role-healthy {
+      color: var(--text-dim);
+    }
+
+    .tree-connector {
+      color: var(--text-dim);
+      font-size: 18px;
+      line-height: 1;
+      opacity: 0.6;
+    }
+
+    /* Diagnosis Panel */
+    .diagnosis-content {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .alert-banner {
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .alert-banner.healthy {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .alert-banner.danger {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+
+    .alert-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .confidence-tag {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      font-weight: 600;
+    }
+
+    .spoken-box {
+      background: rgba(0, 0, 0, 0.3);
+      border-left: 3px solid var(--accent-blue);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #e2e8f0;
+      line-height: 1.6;
+    }
+
+    .spoken-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--accent-blue);
+      font-weight: 700;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Controls Bar */
+    .demo-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.18);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.35);
+      color: #fff;
+    }
+
+    .btn-warning {
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fcd34d;
+    }
+    .btn-warning:hover {
+      background: rgba(245, 158, 11, 0.35);
+      color: #fff;
+    }
+
+    .btn-success {
+      background: rgba(16, 185, 129, 0.18);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+    }
+    .btn-success:hover {
+      background: rgba(16, 185, 129, 0.35);
+      color: #fff;
+    }
+
+    .btn-primary {
+      background: rgba(56, 189, 248, 0.18);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: #7dd3fc;
+    }
+    .btn-primary:hover {
+      background: rgba(56, 189, 248, 0.35);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--card-border);
+      color: var(--text-muted);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+    }
+
+    /* Audit Log Table */
+    .audit-card {
+      margin-top: 10px;
+    }
+
+    .table-container {
+      max-height: 280px;
+      overflow-y: auto;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--text-dim);
+      font-weight: 600;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--card-border);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .actor-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .actor-user {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    .actor-system {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text-muted);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .time-col {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .result-cell {
+      max-width: 380px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="logo-icon">🛡️</div>
+        <div class="brand-text">
+          <h1>HomeGuard</h1>
+          <p>The Smart Home That Explains Itself • Amazon Alexa+ Hackathon</p>
+        </div>
+      </div>
+      <div class="badges">
+        <div class="sim-badge" id="simulated-badge">
+          <span>⚠️</span> SIMULATED DEVICES ONLY
+        </div>
+        <div class="live-indicator">
+          <div class="pulse-dot"></div>
+          <span>MCP Streamable-HTTP • Live</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <div class="dashboard-grid">
+      <!-- Dependency Graph -->
+      <div class="card">
+        <div class="card-title">
+          <span>Dependency Graph Topology</span>
+          <span style="font-size: 12px; color: var(--text-dim);">Single Root Cause Isolation</span>
+        </div>
+
+        <div class="graph-tree">
+          <!-- Level 1: Gateway Router -->
+          <div class="node-row">
+            <div class="device-node healthy" id="node-router">
+              <div class="node-header">
+                <span class="node-icon">🌐</span>
+                <span class="node-status-badge status-online" id="status-router">ONLINE</span>
+              </div>
+              <div class="node-name">Main Router</div>
+              <div class="node-role-tag role-healthy" id="role-router">UPSTREAM GATEWAY</div>
+            </div>
+          </div>
+
+          <div class="tree-connector">↓</div>
+
+          <!-- Level 2: Wi-Fi Extender -->
+          <div class="node-row">
+            <div class="device-node healthy" id="node-wifi_extender">
+              <div class="node-header">
+                <span class="node-icon">📶</span>
+                <span class="node-status-badge status-online" id="status-wifi_extender">ONLINE</span>
+              </div>
+              <div class="node-name">Wi-Fi Extender</div>
+              <div class="node-role-tag role-healthy" id="role-wifi_extender">REPEATER NODE</div>
+            </div>
+          </div>
+
+          <div class="tree-connector">↙ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↘</div>
+
+          <!-- Level 3: Leaf Devices -->
+          <div class="node-row">
+            <div class="device-node healthy" id="node-ring_doorbell">
+              <div class="node-header">
+                <span class="node-icon">🔔</span>
+                <span class="node-status-badge status-online" id="status-ring_doorbell">ONLINE</span>
+              </div>
+              <div class="node-name">Ring Doorbell</div>
+              <div class="node-role-tag role-healthy" id="role-ring_doorbell">SECURITY LEAF</div>
+            </div>
+
+            <div class="device-node healthy" id="node-fire_tv">
+              <div class="node-header">
+                <span class="node-icon">📺</span>
+                <span class="node-status-badge status-online" id="status-fire_tv">ONLINE</span>
+              </div>
+              <div class="node-name">Fire TV 4K</div>
+              <div class="node-role-tag role-healthy" id="role-fire_tv">STREAMING LEAF</div>
+            </div>
+
+            <div class="device-node healthy" id="node-echo_speaker">
+              <div class="node-header">
+                <span class="node-icon">🗣️</span>
+                <span class="node-status-badge status-online" id="status-echo_speaker">ONLINE</span>
+              </div>
+              <div class="node-name">Echo Speaker</div>
+              <div class="node-role-tag role-healthy" id="role-echo_speaker">VOICE LEAF</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Root Cause Analysis & Voice Explanation Panel -->
+      <div class="card">
+        <div class="card-title">
+          <span>Active Root Cause Diagnosis</span>
+          <span id="active-inc-id" style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--accent-blue);"></span>
+        </div>
+
+        <div class="diagnosis-content">
+          <div class="alert-banner healthy" id="diagnosis-banner">
+            <div class="alert-header">
+              <strong id="diagnosis-title" style="font-size: 14px;">All Systems Operational</strong>
+              <span class="confidence-tag" id="confidence-tag">100% Confident</span>
+            </div>
+            <p id="diagnosis-explanation" style="font-size: 13px; color: var(--text-muted);">
+              All 5 simulated devices are online and functioning normally.
+            </p>
+          </div>
+
+          <div class="spoken-box">
+            <div class="spoken-title">
+              <span>🎙️</span> Alexa+ Spoken Response (Voice Persona)
+            </div>
+            <p id="spoken-text" style="font-style: italic;">
+              "Your home is running smoothly. All simulated devices are connected and online."
+            </p>
+          </div>
+
+          <!-- Interactive Demo Controls -->
+          <div style="margin-top: 10px;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase;">
+              Demo Scenario Injectors
+            </div>
+            <div class="demo-controls">
+              <button class="btn-danger" id="btn-inject-outage" onclick="injectExtenderOutage(false)">
+                💥 Inject Extender Outage
+              </button>
+              <button class="btn-warning" id="btn-inject-flaky" onclick="injectExtenderOutage(true)">
+                ⚠️ Inject Flaky Extender (Self-Check Test)
+              </button>
+              <button class="btn-success" id="btn-clear-failures" onclick="clearFailures()">
+                ✨ Clear All Outages
+              </button>
+            </div>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase;">
+              Remediation Action Controls
+            </div>
+            <div class="demo-controls">
+              <button class="btn-primary" id="btn-propose-fix" onclick="proposeFix()">
+                🔍 Propose Fix
+              </button>
+              <button class="btn-primary" id="btn-approve-fix" onclick="approveFix(true)">
+                ✅ Confirm & Restart
+              </button>
+              <button class="btn-secondary" id="btn-verify-fix" onclick="verifyFix()">
+                🛡️ Verify (3 Ticks)
+              </button>
+              <button class="btn-secondary" id="btn-rollback-fix" onclick="rollbackFix()">
+                ↩️ Rollback
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Audit Log -->
+    <div class="card audit-card">
+      <div class="card-title">
+        <span>Append-Only Audit Trail (audit_log.jsonl)</span>
+        <span style="font-size: 12px; color: var(--text-dim);">Live Streaming • Actor Attributed</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 170px;">Timestamp</th>
+              <th style="width: 110px;">Actor</th>
+              <th style="width: 140px;">Action</th>
+              <th style="width: 130px;">Target</th>
+              <th>Outcome Details</th>
+            </tr>
+          </thead>
+          <tbody id="audit-table-body">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-dim); padding: 20px;">
+                Connecting to HomeGuard server...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentIncidentId = null;
+    let simulateFailureFlag = false;
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        updateUI(data);
+      } catch (err) {
+        console.error('Failed to poll status', err);
+      }
+    }
+
+    function updateUI(data) {
+      const devices = data.devices || {};
+      const diag = data.diagnosis || {};
+      const audit = data.audit_log || [];
+      const incidents = data.incidents || {};
+
+      // Find the most recent incident id if any
+      const incidentKeys = Object.keys(incidents);
+      if (incidentKeys.length > 0) {
+        currentIncidentId = incidentKeys[incidentKeys.length - 1];
+        document.getElementById('active-inc-id').innerText = `Incident: ${currentIncidentId} (${incidents[currentIncidentId].state})`;
+      } else {
+        document.getElementById('active-inc-id').innerText = '';
+      }
+
+      // Update Device Nodes
+      for (const [id, dev] of Object.entries(devices)) {
+        const nodeEl = document.getElementById(`node-${id}`);
+        const statusEl = document.getElementById(`status-${id}`);
+        const roleEl = document.getElementById(`role-${id}`);
+
+        if (!nodeEl || !statusEl) continue;
+
+        // Reset classes
+        nodeEl.className = 'device-node';
+        statusEl.className = 'node-status-badge';
+
+        // Apply status class
+        if (dev.status === 'online') {
+          nodeEl.classList.add('healthy');
+          statusEl.classList.add('status-online');
+          statusEl.innerText = 'ONLINE';
+        } else if (dev.status === 'degraded') {
+          nodeEl.classList.add('victim');
+          statusEl.classList.add('status-degraded');
+          statusEl.innerText = 'BUFFERING';
+        } else {
+          statusEl.classList.add('status-offline');
+          statusEl.innerText = 'OFFLINE';
+        }
+
+        // Apply RCA Role tags
+        if (diag.has_incident && diag.root_cause === id) {
+          nodeEl.classList.add('root-cause');
+          roleEl.className = 'node-role-tag role-root-cause';
+          roleEl.innerText = 'ROOT CAUSE';
+        } else if (diag.has_incident && (diag.victims || []).includes(id)) {
+          nodeEl.classList.add('victim');
+          roleEl.className = 'node-role-tag role-victim';
+          roleEl.innerText = 'VICTIM DEVICE';
+        } else {
+          roleEl.className = 'node-role-tag role-healthy';
+          if (id === 'router') roleEl.innerText = 'UPSTREAM GATEWAY';
+          else if (id === 'wifi_extender') roleEl.innerText = 'REPEATER NODE';
+          else roleEl.innerText = 'SMART LEAF';
+        }
+      }
+
+      // Update Diagnosis Panel
+      const banner = document.getElementById('diagnosis-banner');
+      const diagTitle = document.getElementById('diagnosis-title');
+      const diagExp = document.getElementById('diagnosis-explanation');
+      const confTag = document.getElementById('confidence-tag');
+      const spokenText = document.getElementById('spoken-text');
+
+      if (diag.has_incident) {
+        banner.className = 'alert-banner danger';
+        diagTitle.innerText = `🚨 Root Cause: ${diag.root_cause_name || diag.root_cause}`;
+        diagExp.innerText = diag.explanation || 'Root cause detected.';
+        confTag.innerText = `${Math.round((diag.confidence || 0.95) * 100)}% Confident`;
+      } else {
+        banner.className = 'alert-banner healthy';
+        diagTitle.innerText = 'All Systems Operational';
+        diagExp.innerText = 'All 5 simulated devices are online and functioning normally.';
+        confTag.innerText = '100% Confident';
+      }
+
+      if (diag.spoken) {
+        spokenText.innerText = `"${diag.spoken}"`;
+      }
+
+      // Update Audit Log Table
+      const tbody = document.getElementById('audit-table-body');
+      if (audit.length > 0) {
+        const rows = audit.slice(-15).reverse().map(entry => {
+          const time = new Date(entry.timestamp).toLocaleTimeString();
+          const actorClass = entry.actor === 'user_voice' ? 'actor-user' : 'actor-system';
+          const resultStr = typeof entry.result === 'object' ? JSON.stringify(entry.result) : entry.result;
+          return `
+            <tr>
+              <td class="time-col">${time}</td>
+              <td><span class="actor-tag ${actorClass}">${entry.actor}</span></td>
+              <td style="font-weight: 500; color: #f1f5f9;">${entry.action}</td>
+              <td style="color: var(--accent-blue);">${entry.target}</td>
+              <td class="result-cell" title='${escapeHtml(resultStr)}'>${escapeHtml(resultStr)}</td>
+            </tr>
+          `;
+        }).join('');
+        tbody.innerHTML = rows;
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // Interactive Action Handlers
+    async function injectExtenderOutage(failVerification) {
+      simulateFailureFlag = failVerification;
+      await fetch('/api/inject_failure', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          device_id: 'wifi_extender',
+          mode: 'offline',
+          fail_verification: failVerification
+        })
+      });
+      fetchStatus();
+    }
+
+    async function clearFailures() {
+      simulateFailureFlag = false;
+      await fetch('/api/clear_failures', { method: 'POST' });
+      fetchStatus();
+    }
+
+    async function proposeFix() {
+      const res = await fetch('/api/propose_fix', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          simulate_verification_failure: simulateFailureFlag
+        })
+      });
+      const data = await res.json();
+      if (data.incident_id) {
+        currentIncidentId = data.incident_id;
+      }
+      if (data.spoken) {
+        document.getElementById('spoken-text').innerText = `"${data.spoken}"`;
+      }
+      fetchStatus();
+    }
+
+    async function approveFix(confirmed) {
+      if (!currentIncidentId) {
+        await proposeFix();
+      }
+      const res = await fetch('/api/approve_fix', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          incident_id: currentIncidentId,
+          user_confirmed: confirmed
+        })
+      });
+      const data = await res.json();
+      if (data.spoken) {
+        document.getElementById('spoken-text').innerText = `"${data.spoken}"`;
+      }
+      fetchStatus();
+    }
+
+    async function verifyFix() {
+      if (!currentIncidentId) return;
+      const res = await fetch('/api/verify_fix', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ incident_id: currentIncidentId })
+      });
+      const data = await res.json();
+      if (data.spoken) {
+        document.getElementById('spoken-text').innerText = `"${data.spoken}"`;
+      }
+      fetchStatus();
+    }
+
+    async function rollbackFix() {
+      if (!currentIncidentId) return;
+      const res = await fetch('/api/rollback_fix', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ incident_id: currentIncidentId })
+      });
+      const data = await res.json();
+      if (data.spoken) {
+        document.getElementById('spoken-text').innerText = `"${data.spoken}"`;
+      }
+      fetchStatus();
+    }
+
+    // Poll every 1000ms
+    setInterval(fetchStatus, 1000);
+    fetchStatus();
+  </script>
+</body>
+</html>
