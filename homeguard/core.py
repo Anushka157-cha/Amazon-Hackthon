@@ -99,6 +99,7 @@ class HomeGuardEngine:
         self.devices: dict[str, Device] = {}
         self.incidents: dict[str, Incident] = {}
         self.audit_log: list[AuditEntry] = []
+        self.active_fail_verification: bool = False
         self._init_topology()
 
     def _init_topology(self) -> None:
@@ -207,6 +208,7 @@ class HomeGuardEngine:
             return self.clear_failures(actor=actor)
 
         # Set root failure
+        self.active_fail_verification = fail_verification
         self.devices[device_id].status = mode if mode in {"offline", "degraded"} else "offline"
 
         # Cascade failure downstream
@@ -241,6 +243,7 @@ class HomeGuardEngine:
 
     def clear_failures(self, actor: ActorType = "system") -> dict[str, Any]:
         """Restore all simulated devices to healthy online status."""
+        self.active_fail_verification = False
         for dev in self.devices.values():
             dev.status = "online"
         result = {"status": "all_online", "simulated": True}
@@ -394,13 +397,15 @@ class HomeGuardEngine:
         if not incident_id:
             incident_id = f"inc-{uuid.uuid4().hex[:6]}"
 
+        effective_sim_failure = simulate_verification_failure or self.active_fail_verification
+
         incident = Incident(
             incident_id=incident_id,
             target_device=target_device,
             action=action,
             impact=impact,
             state="PROPOSED",
-            simulate_verification_failure=simulate_verification_failure,
+            simulate_verification_failure=effective_sim_failure,
         )
         self.incidents[incident_id] = incident
 

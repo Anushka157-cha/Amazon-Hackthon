@@ -17,6 +17,12 @@ from typing import Any
 import urllib.request
 import urllib.error
 
+# Fix Windows console Unicode encoding
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 
 class AlexaSimulator:
     def __init__(self, base_url: str = "http://127.0.0.1:8000") -> None:
