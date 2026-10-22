@@ -215,3 +215,31 @@ def test_cors_headers(client):
     assert res.status_code == 200
     assert res.headers.get("access-control-allow-origin") in {"*", "http://localhost:8081"}
 
+
+def test_health_and_reliability_endpoints(client):
+    client.post("/api/clear_failures")
+    assert client.get("/health").json()["status"] == "ok"
+    healthy = client.get("/api/reliability").json()
+    assert healthy["health_score"] == 100.0
+    assert healthy["alerts"] == []
+
+    client.post(
+        "/api/inject_failure",
+        json={"device_id": "wifi_extender", "mode": "offline"},
+    )
+    reliability = client.get("/api/reliability").json()
+    assert reliability["health_score"] == 20.0
+    assert reliability["alerts"]
+
+
+def test_incident_report_endpoint(client):
+    client.post(
+        "/api/inject_failure",
+        json={"device_id": "wifi_extender", "mode": "offline"},
+    )
+    proposal = client.get("/api/proposal").json()
+    report = client.get(f"/api/incidents/{proposal['incident_id']}/report")
+
+    assert report.status_code == 200
+    assert report.headers["content-disposition"].startswith("attachment;")
+    assert report.json()["incident"]["incident_id"] == proposal["incident_id"]

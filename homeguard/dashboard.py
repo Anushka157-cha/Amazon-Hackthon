@@ -1,29 +1,33 @@
-"""HomeGuard Dashboard and Combined MCP Server Runner.
+"""HomeGuard Dashboard and Unified MCP Server Runner.
 
-Runs a unified FastAPI server that:
-1. Exposes the live single-page dashboard UI and REST control API.
+Exposes:
+1. Production-oriented REST API for Dashboard, Digital Twin, Voice Assistant,
+   Audit Ledger, Adapters, and Scenarios.
 2. Mounts the MCP server Streamable-HTTP endpoint on the same shared in-memory state.
+3. Serves the responsive 5-tab Pro Dashboard UI.
 """
 
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from contextlib import asynccontextmanager
-
+from homeguard.adapters import NetworkDiscoveryService
 from homeguard.core import VALID_ACTIONS, VALID_DEVICES
 from homeguard.mcp_server import default_engine, default_mcp_server
+from homeguard.scenarios import BENCHMARK_SCENARIOS, run_benchmark_suite
 
-# Mount the MCP server Streamable-HTTP ASGI app (sub-app path='/')
+# Mount the MCP server Streamable-HTTP ASGI app
 try:
     try:
         from mcp.server.transport_security import TransportSecuritySettings
@@ -48,13 +52,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="HomeGuard: The Smart Home That Explains Itself",
-    description="Dependency graph RCA, impact estimation, and voice-controlled safe remediation for smart homes (Simulated).",
-    version="0.1.0",
+    title="HomeGuard Pro: AI-Powered Home Network Reliability Platform",
+    description="Digital Twin topology, deterministic RCA, predictive health, policy-controlled repairs, audit integrity.",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
-# Enable CORS for local development and client integrations
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,25 +69,6 @@ app.add_middleware(
 if mcp_asgi is not None:
     app.mount("/mcp", mcp_asgi)
 
-
-@app.get("/api/mcp-info")
-def get_mcp_status() -> dict[str, Any]:
-    """Return status and tool list when visited by a web browser."""
-    return {
-        "status": "online",
-        "service": "HomeGuard MCP Server",
-        "transport": "Streamable-HTTP",
-        "endpoint": "/mcp",
-        "tools": [
-            "home_status",
-            "diagnose_home",
-            "propose_fix",
-            "approve_fix",
-            "verify_fix",
-            "rollback_fix",
-        ],
-        "message": "Streamable-HTTP endpoint active for Alexa+ and MCP clients. For TV App, visit http://localhost:8082 or Dashboard at /",
-    }
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
@@ -103,6 +87,7 @@ def serve_tv():
     return HTMLResponse("<h1>TV App: tv-app/dist/index.html not found</h1>", status_code=404)
 
 
+# Request Models
 class InjectFailureRequest(BaseModel):
     device_id: str = "wifi_extender"
     mode: str = "offline"
@@ -112,10 +97,12 @@ class InjectFailureRequest(BaseModel):
 class ApproveFixRequest(BaseModel):
     incident_id: str
     user_confirmed: bool = True
+    idempotency_key: str | None = None
 
 
 class VerifyFixRequest(BaseModel):
     incident_id: str
+    consecutive_ticks: int = 3
 
 
 class RollbackFixRequest(BaseModel):
@@ -127,6 +114,11 @@ class ProposeFixRequest(BaseModel):
     simulate_verification_failure: bool = False
 
 
+class VoiceChatRequest(BaseModel):
+    text: str
+    language: str | None = None  # "en" | "hi" | None (auto-detect)
+
+
 class TVApproveBody(BaseModel):
     incident_id: str | None = None
     user_confirmed: bool = True
@@ -134,6 +126,42 @@ class TVApproveBody(BaseModel):
 
 class TVRollbackBody(BaseModel):
     incident_id: str | None = None
+
+
+# Endpoints
+@app.get("/health")
+def health_check() -> dict[str, Any]:
+    """Liveness/readiness endpoint for deployers and load balancers."""
+    return {
+        "status": "ok",
+        "service": "homeguard-pro",
+        "version": "2.0.0",
+        "simulated": True,
+        "device_count": len(default_engine.devices),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/mcp-info")
+def get_mcp_status() -> dict[str, Any]:
+    """Return MCP tools specification and transport details."""
+    return {
+        "status": "online",
+        "service": "HomeGuard Pro MCP Server",
+        "transport": "Streamable-HTTP",
+        "endpoint": "/mcp",
+        "tools": [
+            "get_status",
+            "diagnose",
+            "propose_fix",
+            "approve_fix",
+            "verify_fix",
+            "rollback_fix",
+            "home_status",
+            "diagnose_home",
+        ],
+        "schema_version": "2.0.0",
+    }
 
 
 @app.get("/api/status")
@@ -150,6 +178,7 @@ def get_system_status() -> dict[str, Any]:
         }
         for dev_id, dev in devices.items()
     }
+    predictive = default_engine.predictive_monitor.calculate_network_risk(devices)
 
     return {
         "simulated": True,
@@ -158,6 +187,7 @@ def get_system_status() -> dict[str, Any]:
         "diagnosis": diagnosis,
         "incidents": incidents,
         "audit_log": audit_log,
+        "predictive": predictive,
     }
 
 
@@ -174,28 +204,84 @@ def get_diagnosis() -> dict[str, Any]:
         "victims": diag.get("victims", []),
         "victim_names": diag.get("victim_names", []),
         "confidence": diag.get("confidence", 1.0),
+        "confidence_label": diag.get("confidence_label", "high"),
+        "evidence": diag.get("evidence", []),
+        "observed_facts": diag.get("observed_facts", []),
+        "inferred_hypotheses": diag.get("inferred_hypotheses", []),
+        "candidates": diag.get("candidates", []),
         "summary": diag.get("explanation", ""),
         "explanation": diag.get("explanation", ""),
+        "explanation_hindi": diag.get("explanation_hindi", ""),
         "spoken": diag.get("spoken", ""),
+        "spoken_hindi": diag.get("spoken_hindi", ""),
+        "clarifying_questions": diag.get("clarifying_questions", []),
+        "clarifying_questions_hindi": diag.get("clarifying_questions_hindi", []),
     }
+
+
+@app.get("/api/health-history")
+def get_health_history(limit: int = 24) -> dict[str, Any]:
+    """Return bounded telemetry snapshots for reliability trends."""
+    return {
+        "simulated": True,
+        "snapshots": default_engine.get_health_history(limit),
+    }
+
+
+@app.get("/api/reliability")
+def get_reliability() -> dict[str, Any]:
+    """Summarize observed health signals and predictive risks."""
+    devices = default_engine.get_devices()
+    return default_engine.predictive_monitor.calculate_network_risk(devices)
+
+
+@app.get("/api/incidents")
+def get_incidents() -> dict[str, Any]:
+    """Return incident lifecycle records ordered newest first."""
+    incidents = [
+        incident.to_dict()
+        for incident in reversed(list(default_engine.incidents.values()))
+    ]
+    return {"simulated": True, "count": len(incidents), "incidents": incidents}
+
+
+@app.get("/api/incidents/{incident_id}/report")
+def get_incident_report(incident_id: str) -> JSONResponse:
+    """Return a downloadable, audit-linked incident report."""
+    try:
+        report = default_engine.get_incident_report(incident_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse(
+        content=report,
+        headers={"Content-Disposition": f'attachment; filename="{incident_id}-report.json"'},
+    )
 
 
 @app.get("/api/proposal")
 def get_proposal() -> dict[str, Any]:
-    """Return proposed fix + impact (devices affected, duration, tier)."""
-    # Check if there is already an active proposed incident
-    proposed_incidents = [
-        inc for inc in default_engine.incidents.values() if inc.state == "PROPOSED"
-    ]
+    """Return active proposed fix + impact (affected devices, duration, tier, alternatives)."""
     diag = default_engine.diagnose_home()
+    current_root = diag.get("root_cause")
+    current_fingerprint = default_engine._state_fingerprint()
 
-    if proposed_incidents:
-        inc = proposed_incidents[-1]
+    # Find valid proposal matching current root cause and state
+    valid_proposals = [
+        inc for inc in default_engine.incidents.values()
+        if inc.state == "PROPOSED"
+        and inc.target_device == current_root
+        and (not inc.state_fingerprint or inc.state_fingerprint == current_fingerprint)
+    ]
+
+    if valid_proposals:
+        inc = valid_proposals[-1]
         impact = inc.impact
+        plan = default_engine.proposals.get(inc.proposal_id or "")
         return {
             "simulated": True,
             "has_proposal": True,
             "incident_id": inc.incident_id,
+            "proposal_id": inc.proposal_id,
             "target_device": inc.target_device,
             "action": inc.action,
             "proposed_fix": f"{inc.action} {inc.target_device}",
@@ -208,16 +294,25 @@ def get_proposal() -> dict[str, Any]:
             "tier": impact.get("tier", "LOW"),
             "confirmation_required": True,
             "description": impact.get("description", ""),
+            "safer_alternatives": plan.safer_alternatives if plan else [],
+            "expires_at": inc.expires_at,
+            "spoken": plan.spoken if plan else "",
+            "spoken_hindi": plan.spoken_hindi if plan else "",
         }
 
-    # If an incident exists but hasn't been proposed yet, propose one
-    if diag.get("has_incident") and diag.get("root_cause"):
+    # If an incident exists but no valid proposal exists for the current root cause, propose one
+    if diag.get("has_incident") and current_root:
+        # Invalidate obsolete proposals
+        for inc in default_engine.incidents.values():
+            if inc.state == "PROPOSED" and inc.target_device != current_root:
+                inc.state = "REJECTED"
         prop = default_engine.propose_fix(actor="system")
         impact = prop.get("impact", {})
         return {
             "simulated": True,
             "has_proposal": True,
             "incident_id": prop.get("incident_id"),
+            "proposal_id": prop.get("proposal_id"),
             "target_device": prop.get("target_device"),
             "action": prop.get("action"),
             "proposed_fix": f"{prop.get('action')} {prop.get('target_device')}",
@@ -230,7 +325,10 @@ def get_proposal() -> dict[str, Any]:
             "tier": impact.get("tier", "LOW"),
             "confirmation_required": True,
             "description": impact.get("description", ""),
+            "safer_alternatives": prop.get("safer_alternatives", []),
+            "expires_at": prop.get("expires_at"),
             "spoken": prop.get("spoken", ""),
+            "spoken_hindi": prop.get("spoken_hindi", ""),
         }
 
     return {
@@ -259,34 +357,42 @@ def approve_fix_tv(req: TVApproveBody | None = None) -> dict[str, Any]:
     inc_id = req.incident_id if req is not None else None
 
     diag = default_engine.diagnose_home()
-    # If no incident_id supplied, locate the current PROPOSED incident
-    if not inc_id:
-        proposed_incidents = [
-            inc for inc in default_engine.incidents.values() if inc.state == "PROPOSED"
-        ]
-        if not proposed_incidents or not diag.get("has_incident"):
-            result = {
-                "simulated": True,
-                "incident_id": None,
-                "executed": False,
-                "error": "NO_PROPOSAL",
-                "message": "Cannot approve fix: no proposed fix exists. Propose first.",
-                "spoken": "I couldn't find a proposed fix to approve.",
-            }
-            default_engine._log_action(
-                actor="user_tv", action="approve_fix_refused", target="none", result=result
-            )
-            return result
-        inc_id = proposed_incidents[-1].incident_id
+    current_root = diag.get("root_cause")
+    current_fingerprint = default_engine._state_fingerprint()
 
-    # Call core approve_fix (enforces user_confirmed and state == PROPOSED)
+    if not inc_id:
+        valid_proposals = [
+            inc for inc in default_engine.incidents.values()
+            if inc.state == "PROPOSED"
+            and inc.target_device == current_root
+            and (not inc.state_fingerprint or inc.state_fingerprint == current_fingerprint)
+        ]
+        if not valid_proposals:
+            if diag.get("has_incident") and current_root:
+                fresh_prop = default_engine.propose_fix(actor="user_tv")
+                inc_id = fresh_prop.get("incident_id")
+            else:
+                result = {
+                    "simulated": True,
+                    "incident_id": None,
+                    "executed": False,
+                    "error": "NO_PROPOSAL",
+                    "message": "Cannot approve fix: no proposed fix exists. Propose first.",
+                    "spoken": "I couldn't find a proposed fix to approve.",
+                }
+                default_engine._log_action(
+                    actor="user_tv", action="approve_fix_refused", target="none", result=result
+                )
+                return result
+        else:
+            inc_id = valid_proposals[-1].incident_id
+
     res = default_engine.approve_fix(
         incident_id=inc_id,
         user_confirmed=user_confirmed,
         actor="user_tv",
     )
 
-    # If execution succeeded, also run stabilization verification
     if res.get("executed"):
         ver = default_engine.verify_fix(
             incident_id=inc_id,
@@ -336,15 +442,21 @@ def rollback_fix_tv(req: TVRollbackBody | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/audit")
-def get_audit_trail() -> dict[str, Any]:
-    """Return the last 20 audit entries."""
-    entries = default_engine.get_audit_log(limit=20)
+def get_audit_trail(limit: int = 20) -> dict[str, Any]:
+    """Return audit events."""
+    entries = default_engine.get_audit_log(limit=limit)
     return {
         "simulated": True,
         "count": len(entries),
         "entries": entries,
         "audit_log": entries,
     }
+
+
+@app.get("/api/audit/verify-integrity")
+def verify_audit_integrity() -> dict[str, Any]:
+    """Cryptographically verify the SHA-256 tamper-evident hash chain."""
+    return default_engine.database.verify_audit_chain_integrity()
 
 
 @app.post("/api/inject_failure")
@@ -388,6 +500,7 @@ def approve_fix(req: ApproveFixRequest) -> dict[str, Any]:
         incident_id=req.incident_id,
         user_confirmed=req.user_confirmed,
         actor="system",
+        idempotency_key=req.idempotency_key,
     )
 
 
@@ -396,7 +509,7 @@ def verify_fix(req: VerifyFixRequest) -> dict[str, Any]:
     """Trigger stabilization check."""
     return default_engine.verify_fix(
         incident_id=req.incident_id,
-        consecutive_ticks=3,
+        consecutive_ticks=req.consecutive_ticks,
         actor="system",
     )
 
@@ -410,26 +523,103 @@ def rollback_fix(req: RollbackFixRequest) -> dict[str, Any]:
     )
 
 
+@app.post("/api/voice/intent")
+def process_voice_message(req: VoiceChatRequest) -> dict[str, Any]:
+    """Process natural language voice transcript in English or Hindi."""
+    diag = default_engine.diagnose_home()
+    lang = req.language or default_engine.voice_assistant.detect_language(req.text)
+    intent, display_text, spoken_text = default_engine.voice_assistant.get_contextual_response(
+        user_text=req.text,
+        diagnosis_data=diag,
+        language=lang,  # type: ignore
+    )
+
+    action_result = None
+    if intent == "APPROVE_FIX" and diag.get("has_incident"):
+        prop = default_engine.propose_fix(actor="user_voice")
+        if prop.get("incident_id"):
+            action_result = default_engine.approve_fix(
+                incident_id=prop["incident_id"],
+                user_confirmed=True,
+                actor="user_voice",
+            )
+            if action_result.get("executed"):
+                ver = default_engine.verify_fix(
+                    incident_id=prop["incident_id"],
+                    consecutive_ticks=3,
+                    actor="system",
+                )
+                action_result["verification"] = ver
+
+    elif intent == "ROLLBACK_FIX":
+        eligible = [
+            inc for inc in default_engine.incidents.values() if inc.pre_fix_snapshot is not None
+        ]
+        if eligible:
+            action_result = default_engine.rollback_fix(
+                incident_id=eligible[-1].incident_id,
+                actor="user_voice",
+            )
+
+    return {
+        "user_query": req.text,
+        "detected_language": lang,
+        "intent": intent,
+        "response_text": display_text,
+        "spoken": spoken_text,
+        "action_result": action_result,
+        "has_incident": diag.get("has_incident", False),
+    }
+
+
+@app.get("/api/scenarios/benchmark")
+def run_benchmark() -> dict[str, Any]:
+    """Run all 8 automated reliability test scenarios and return accuracy score."""
+    return run_benchmark_suite(default_engine)
+
+
+@app.get("/api/discovery/scan")
+def scan_network(subnet: str = "192.168.1.0/24") -> dict[str, Any]:
+    """Simulate LAN subnet discovery of physical & virtual nodes."""
+    nodes = NetworkDiscoveryService.scan_subnet(subnet)
+    return {
+        "subnet": subnet,
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "discovered_devices": nodes,
+    }
+
+
+@app.get("/api/adapters/status")
+def get_adapters_status() -> dict[str, Any]:
+    """Return connection status of device integration adapters."""
+    return {
+        "adapters": [
+            adapter.test_connection()
+            for adapter in default_engine.adapters.values()
+        ]
+    }
+
+
 @app.get("/")
 def serve_dashboard():
-    """Serve the single-page dashboard HTML."""
+    """Serve the Pro dashboard HTML."""
     if INDEX_FILE.exists():
         return FileResponse(INDEX_FILE)
-    return HTMLResponse("<h1>HomeGuard Dashboard: static/index.html not found</h1>")
+    return HTMLResponse("<h1>HomeGuard Pro Dashboard: static/index.html not found</h1>")
 
 
 def run() -> None:
     """Entrypoint to run dashboard and MCP server together."""
     host = os.getenv("HOMEGUARD_HOST", "0.0.0.0")
     port = int(os.getenv("PORT", os.getenv("HOMEGUARD_PORT", "8000")))
-    print(f"===========================================================")
-    print(f"  HomeGuard Unified Server (FastAPI + MCP Server) Starting")
+    print("===========================================================")
+    print("  HomeGuard Pro Unified Platform Starting")
     print(f"  Dashboard UI:   http://127.0.0.1:{port}/")
     print(f"  LAN Access:     http://{host}:{port}/")
     print(f"  MCP Endpoint:   http://127.0.0.1:{port}/mcp")
-    print(f"  State:          Shared In-Memory Singleton")
-    print(f"  SIMULATED:      ALL smart home devices are simulated")
-    print(f"===========================================================")
+    print("  State:          Digital Twin Engine & Relational DB")
+    print("  SIMULATED:      ALL smart home devices are simulated")
+    print("===========================================================")
     uvicorn.run(app, host=host, port=port)
 
 

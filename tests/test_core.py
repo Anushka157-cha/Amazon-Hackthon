@@ -130,3 +130,33 @@ def test_audit_log_records_actions(engine):
     assert len(logs) >= 2
     assert any(l["action"] == "inject_failure" and l["target"] == DEVICE_WIFI_EXTENDER for l in logs)
     assert any(l["action"] == "propose_fix" for l in logs)
+
+
+def test_stale_proposal_is_rejected(engine):
+    engine.inject_failure(DEVICE_WIFI_EXTENDER, mode="offline")
+    proposal = engine.propose_fix()
+    engine.inject_failure(DEVICE_WIFI_EXTENDER, mode="degraded")
+
+    result = engine.approve_fix(proposal["incident_id"], user_confirmed=True)
+
+    assert result["executed"] is False
+    assert result["error"] == "STALE_PROPOSAL"
+
+
+def test_audit_log_is_hash_chained(engine):
+    engine.inject_failure(DEVICE_WIFI_EXTENDER, mode="offline")
+    entries = engine.get_audit_log()
+
+    assert entries[0]["entry_hash"]
+    if len(entries) > 1:
+        assert entries[1]["previous_hash"] == entries[0]["entry_hash"]
+
+
+def test_health_history_and_report(engine):
+    engine.inject_failure(DEVICE_WIFI_EXTENDER, mode="offline")
+    proposal = engine.propose_fix()
+    report = engine.get_incident_report(proposal["incident_id"])
+
+    assert len(engine.get_health_history()) >= 2
+    assert report["incident"]["incident_id"] == proposal["incident_id"]
+    assert report["events"]

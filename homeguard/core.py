@@ -1,20 +1,36 @@
 """HomeGuard Core Engine.
 
-Models the smart home as a dependency graph, performs root-cause analysis,
-evaluates fix impact, executes safe fixes with explicit confirmation,
-verifies stabilization across consecutive ticks, and supports rollback.
+Models the smart home as a live dependency graph Digital Twin,
+performs deterministic root-cause analysis with explainable bilingual AI,
+detects early predictive degradation, executes policy-controlled repairs with
+explicit approval, verifies recovery across consecutive ticks, and supports rollback.
 
 NOTE: ALL DEVICES ARE SIMULATED.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+
+from homeguard.adapters import (
+    AsusWrtRouterAdapter,
+    BaseDeviceAdapter,
+    HomeAssistantAdapter,
+    NetworkDiscoveryService,
+    SimulatedDeviceAdapter,
+    UniFiAdapter,
+)
+from homeguard.database import HomeGuardDatabase
+from homeguard.diagnosis import ExplainableDiagnosisEngine
+from homeguard.predictive import PredictiveHealthMonitor
+from homeguard.repair_policy import ProposalPlan, RepairPolicyEngine
+from homeguard.voice_assistant import VoiceAssistant
 
 # Supported devices and valid actions
 DEVICE_ROUTER = "router"
@@ -42,9 +58,11 @@ DEVICE_FRIENDLY_NAMES = {
 }
 
 StatusType = Literal["online", "degraded", "offline"]
-ActorType = Literal["user_voice", "system"]
+ActorType = Literal["user_voice", "user_tv", "system", "admin"]
 ImpactTier = Literal["LOW", "MEDIUM", "HIGH"]
-IncidentState = Literal["PROPOSED", "EXECUTED", "RESOLVED", "REJECTED", "ROLLED_BACK"]
+IncidentState = Literal[
+    "PROPOSED", "APPROVED", "EXECUTING", "VERIFYING", "RESOLVED", "REJECTED", "ROLLED_BACK", "FAILED"
+]
 
 
 @dataclass
@@ -56,6 +74,11 @@ class Device:
     simulated: bool = True
     upstream: list[str] = field(default_factory=list)
     downstream: list[str] = field(default_factory=list)
+    last_seen: str | None = None
+    health_metrics: dict[str, float] = field(default_factory=dict)
+    ip_address: str = "192.168.1.1"
+    mac_address: str = "00:1A:2B:3C:4D:00"
+    adapter_type: str = "simulated"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,10 +87,14 @@ class Device:
 @dataclass
 class AuditEntry:
     timestamp: str
-    actor: ActorType
+    actor: str
     action: str
     target: str
     result: dict[str, Any] | str
+    event_id: str = field(default_factory=lambda: f"evt-{uuid.uuid4().hex[:12]}")
+    correlation_id: str | None = None
+    previous_hash: str | None = None
+    entry_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -79,28 +106,56 @@ class Incident:
     target_device: str
     action: str
     impact: dict[str, Any]
-    state: IncidentState = "PROPOSED"
+    state: str = "PROPOSED"
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     pre_fix_snapshot: dict[str, StatusType] | None = None
     simulate_verification_failure: bool = False
     verification_ticks_passed: int = 0
+    expires_at: str | None = None
+    state_fingerprint: str | None = None
+    execution_id: str | None = None
+    approved_at: str | None = None
+    proposal_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class HomeGuardEngine:
-    """Core state engine and dependency graph analyzer for HomeGuard."""
+    """Core state engine, digital twin, dependency graph analyzer, and repair orchestrator."""
 
-    def __init__(self, audit_log_path: str = "audit_log.jsonl") -> None:
+    def __init__(
+        self,
+        audit_log_path: str = "audit_log.jsonl",
+        db_path: str = "homeguard.db",
+    ) -> None:
         self.audit_log_path = audit_log_path
+        self.db_path = db_path
+        self.database = HomeGuardDatabase(db_path=self.db_path)
+        self.diagnosis_engine = ExplainableDiagnosisEngine(DEVICE_FRIENDLY_NAMES)
+        self.predictive_monitor = PredictiveHealthMonitor()
+        self.repair_engine = RepairPolicyEngine()
+        self.voice_assistant = VoiceAssistant()
+
+        # Device Adapters
+        self.adapters: dict[str, BaseDeviceAdapter] = {
+            "simulated": SimulatedDeviceAdapter(),
+            "asuswrt": AsusWrtRouterAdapter(),
+            "homeassistant": HomeAssistantAdapter(),
+            "unifi": UniFiAdapter(),
+        }
+
         self.devices: dict[str, Device] = {}
         self.incidents: dict[str, Incident] = {}
+        self.proposals: dict[str, ProposalPlan] = {}
         self.audit_log: list[AuditEntry] = []
         self.active_fail_verification: bool = False
+        self.health_history: list[dict[str, Any]] = []
+
         self._init_topology()
+        self._record_health_snapshot()
 
     def _init_topology(self) -> None:
         """Initialize the simulated home device dependency graph."""
@@ -113,6 +168,9 @@ class HomeGuardEngine:
                 simulated=True,
                 upstream=[],
                 downstream=[DEVICE_WIFI_EXTENDER],
+                ip_address="192.168.1.1",
+                mac_address="00:1A:2B:3C:4D:01",
+                adapter_type="simulated",
             ),
             DEVICE_WIFI_EXTENDER: Device(
                 id=DEVICE_WIFI_EXTENDER,
@@ -122,6 +180,9 @@ class HomeGuardEngine:
                 simulated=True,
                 upstream=[DEVICE_ROUTER],
                 downstream=[DEVICE_RING_DOORBELL, DEVICE_FIRE_TV, DEVICE_ECHO_SPEAKER],
+                ip_address="192.168.1.15",
+                mac_address="00:1A:2B:3C:4D:02",
+                adapter_type="simulated",
             ),
             DEVICE_RING_DOORBELL: Device(
                 id=DEVICE_RING_DOORBELL,
@@ -131,6 +192,9 @@ class HomeGuardEngine:
                 simulated=True,
                 upstream=[DEVICE_WIFI_EXTENDER],
                 downstream=[],
+                ip_address="192.168.1.52",
+                mac_address="00:1A:2B:3C:4D:03",
+                adapter_type="simulated",
             ),
             DEVICE_FIRE_TV: Device(
                 id=DEVICE_FIRE_TV,
@@ -140,6 +204,9 @@ class HomeGuardEngine:
                 simulated=True,
                 upstream=[DEVICE_WIFI_EXTENDER],
                 downstream=[],
+                ip_address="192.168.1.88",
+                mac_address="00:1A:2B:3C:4D:04",
+                adapter_type="simulated",
             ),
             DEVICE_ECHO_SPEAKER: Device(
                 id=DEVICE_ECHO_SPEAKER,
@@ -149,36 +216,120 @@ class HomeGuardEngine:
                 simulated=True,
                 upstream=[DEVICE_WIFI_EXTENDER],
                 downstream=[],
+                ip_address="192.168.1.94",
+                mac_address="00:1A:2B:3C:4D:05",
+                adapter_type="simulated",
             ),
         }
+        now = datetime.now(timezone.utc).isoformat()
+        for device in self.devices.values():
+            device.last_seen = now
+            device.health_metrics = self._metrics_for_status(device.status)
+
+    @staticmethod
+    def _metrics_for_status(status: StatusType) -> dict[str, float]:
+        if status == "offline":
+            return {"latency_ms": 0.0, "packet_loss_pct": 100.0, "reconnects_24h": 8.0, "uptime_pct": 0.0}
+        if status == "degraded":
+            return {"latency_ms": 180.0, "packet_loss_pct": 8.0, "reconnects_24h": 4.0, "uptime_pct": 96.0}
+        return {"latency_ms": 24.0, "packet_loss_pct": 0.0, "reconnects_24h": 0.0, "uptime_pct": 99.98}
+
+    def _record_health_snapshot(self) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        snapshot = {
+            "timestamp": now,
+            "devices": {
+                device_id: {
+                    "status": device.status,
+                    "metrics": dict(device.health_metrics),
+                }
+                for device_id, device in self.devices.items()
+            },
+        }
+        self.health_history.append(snapshot)
+        self.health_history = self.health_history[-100:]
+
+        # Persist to database
+        try:
+            for dev_id, dev in self.devices.items():
+                self.database.record_health_metric(dev_id, dev.health_metrics)
+        except Exception:
+            pass
+
+    def _set_status(self, device_id: str, status: StatusType) -> None:
+        device = self.devices[device_id]
+        device.status = status
+        device.health_metrics = self._metrics_for_status(status)
+        if status == "online":
+            device.last_seen = datetime.now(timezone.utc).isoformat()
 
     def _log_action(
         self,
-        actor: ActorType,
+        actor: ActorType | str,
         action: str,
         target: str,
         result: dict[str, Any] | str,
+        correlation_id: str | None = None,
     ) -> AuditEntry:
-        """Record an action in memory and append to the JSON-lines audit file."""
+        """Record an action in memory, file, and relational storage with cryptographic hash chaining."""
+        previous_hash = self.audit_log[-1].entry_hash if self.audit_log else None
+        unsigned = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "actor": actor,
+            "action": action,
+            "target": target,
+            "result": result,
+            "correlation_id": correlation_id,
+            "previous_hash": previous_hash,
+        }
+        entry_hash = hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        event_id = f"evt-{uuid.uuid4().hex[:12]}"
         entry = AuditEntry(
             timestamp=datetime.now(timezone.utc).isoformat(),
             actor=actor,
             action=action,
             target=target,
             result=result,
+            event_id=event_id,
+            correlation_id=correlation_id,
+            previous_hash=previous_hash,
+            entry_hash=entry_hash,
         )
         self.audit_log.append(entry)
+
+        # Append to JSONL file
         try:
             with open(self.audit_log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry.to_dict()) + "\n")
         except OSError:
-            # Continue even if local disk write encounters transient issue
             pass
+
+        # Persist to relational DB
+        try:
+            self.database.record_audit_event(
+                event_id=event_id,
+                actor=actor,
+                action=action,
+                target=target,
+                result=result,
+                correlation_id=correlation_id,
+                previous_hash=previous_hash,
+                entry_hash=entry_hash,
+            )
+        except Exception:
+            pass
+
         return entry
 
     def get_devices(self) -> dict[str, dict[str, Any]]:
         """Return all simulated devices and their status."""
         return {dev_id: dev.to_dict() for dev_id, dev in self.devices.items()}
+
+    def get_health_history(self, limit: int = 24) -> list[dict[str, Any]]:
+        """Return recent health snapshots for trend charts and incident reports."""
+        return self.health_history[-max(1, min(limit, 100)):]
 
     def get_downstream_descendants(self, device_id: str) -> list[str]:
         """Find all transitive downstream devices depending on device_id."""
@@ -196,9 +347,9 @@ class HomeGuardEngine:
         device_id: str,
         mode: StatusType | str = "offline",
         fail_verification: bool = False,
-        actor: ActorType = "system",
+        actor: ActorType | str = "system",
     ) -> dict[str, Any]:
-        """Inject a simulated failure into a device and cascade to victims."""
+        """Inject a simulated failure into a device and cascade downstream."""
         if device_id not in VALID_DEVICES:
             raise ValueError(
                 f"Unknown simulated device: '{device_id}'. Allowed devices: {sorted(list(VALID_DEVICES))}"
@@ -207,26 +358,23 @@ class HomeGuardEngine:
         if mode == "online":
             return self.clear_failures(actor=actor)
 
-        # Set root failure
         self.active_fail_verification = fail_verification
-        self.devices[device_id].status = mode if mode in {"offline", "degraded"} else "offline"
+        self._set_status(
+            device_id,
+            mode if mode in {"offline", "degraded"} else "offline",
+        )
 
-        # Cascade failure downstream
         victims_affected: list[str] = []
         if device_id == DEVICE_WIFI_EXTENDER:
-            # Realistic cascade as described in product idea:
-            # Ring doorbell goes offline, Fire TV buffers (degraded), Echo says 'something went wrong' (offline)
-            self.devices[DEVICE_RING_DOORBELL].status = "offline"
-            self.devices[DEVICE_FIRE_TV].status = "degraded"
-            self.devices[DEVICE_ECHO_SPEAKER].status = "offline"
+            self._set_status(DEVICE_RING_DOORBELL, "offline")
+            self._set_status(DEVICE_FIRE_TV, "degraded")
+            self._set_status(DEVICE_ECHO_SPEAKER, "offline")
             victims_affected = [DEVICE_RING_DOORBELL, DEVICE_FIRE_TV, DEVICE_ECHO_SPEAKER]
         elif device_id == DEVICE_ROUTER:
-            # Router drops everything
             for d in [DEVICE_WIFI_EXTENDER, DEVICE_RING_DOORBELL, DEVICE_FIRE_TV, DEVICE_ECHO_SPEAKER]:
-                self.devices[d].status = "offline"
+                self._set_status(d, "offline")
                 victims_affected.append(d)
         else:
-            # Leaf device failure only affects itself
             victims_affected = []
 
         result = {
@@ -238,108 +386,30 @@ class HomeGuardEngine:
             "fail_verification": fail_verification,
         }
 
+        self._record_health_snapshot()
         self._log_action(actor=actor, action="inject_failure", target=device_id, result=result)
         return result
 
-    def clear_failures(self, actor: ActorType = "system") -> dict[str, Any]:
+    def clear_failures(self, actor: ActorType | str = "system") -> dict[str, Any]:
         """Restore all simulated devices to healthy online status."""
         self.active_fail_verification = False
         for dev in self.devices.values():
-            dev.status = "online"
+            self._set_status(dev.id, "online")
         for inc in self.incidents.values():
             if inc.state in {"PROPOSED", "EXECUTING", "FAILED"}:
                 inc.state = "REJECTED"
         result = {"status": "all_online", "simulated": True}
+        self._record_health_snapshot()
         self._log_action(actor=actor, action="clear_failures", target="home", result=result)
         return result
 
     def diagnose_home(self) -> dict[str, Any]:
-        """Perform root-cause analysis (RCA) on the device dependency graph.
-
-        Rule:
-        - An unhealthy device is a ROOT_CAUSE if all its upstream dependencies are healthy.
-        - Unhealthy devices below a failed ancestor are VICTIMS.
-        """
-        unhealthy = {k: v for k, v in self.devices.items() if v.status != "online"}
-
-        if not unhealthy:
-            return {
-                "simulated": True,
-                "has_incident": False,
-                "root_cause": None,
-                "root_cause_name": None,
-                "root_cause_status": "online",
-                "victims": [],
-                "victim_names": [],
-                "confidence": 1.0,
-                "explanation": "All 5 simulated devices are online and functioning normally.",
-                "spoken": "Your home is running smoothly. All simulated devices are connected and online.",
-            }
-
-        # Find devices whose upstream dependencies are all healthy
-        root_cause_candidates: list[str] = []
-        for dev_id in unhealthy:
-            upstream = self.devices[dev_id].upstream
-            # Healthy if no upstream, or all upstream are online
-            upstream_healthy = all(
-                self.devices[u].status == "online" for u in upstream
-            )
-            if upstream_healthy:
-                root_cause_candidates.append(dev_id)
-
-        # Single root cause
-        if len(root_cause_candidates) == 1:
-            root_cause_id = root_cause_candidates[0]
-            root_cause_dev = self.devices[root_cause_id]
-            descendants = set(self.get_downstream_descendants(root_cause_id))
-            victims = [d for d in unhealthy if d in descendants and d != root_cause_id]
-            
-            # Confidence calculation based on dependency graph topology
-            # If 100% of upstream is healthy and downstream explains all unhealthy nodes
-            coverage = (1 + len(victims)) / len(unhealthy)
-            confidence = round(min(0.98, 0.90 + 0.08 * coverage), 2)
-
-            root_name = DEVICE_FRIENDLY_NAMES.get(root_cause_id, root_cause_id)
-            victim_names = [DEVICE_FRIENDLY_NAMES.get(v, v) for v in victims]
-
-            explanation = (
-                f"Simulated device '{root_name}' is {root_cause_dev.status}, but its upstream gateway is healthy. "
-                f"{len(victims)} downstream devices ({', '.join(victim_names)}) are dependent victims."
-            )
-            spoken = (
-                f"I found the issue. Your {root_name.replace(' (Simulated)', '')} is {root_cause_dev.status}. "
-                f"It is causing {len(victims)} other devices, including your "
-                f"{', '.join([n.replace(' (Simulated)', '') for n in victim_names[:2]])}, to fail."
-            )
-
-            return {
-                "simulated": True,
-                "has_incident": True,
-                "root_cause": root_cause_id,
-                "root_cause_name": root_name,
-                "root_cause_status": root_cause_dev.status,
-                "victims": victims,
-                "victim_names": victim_names,
-                "confidence": confidence,
-                "explanation": explanation,
-                "spoken": spoken,
-            }
-        else:
-            # Multiple uncorrelated failures
-            primary = root_cause_candidates[0] if root_cause_candidates else list(unhealthy.keys())[0]
-            victims = [d for d in unhealthy if d != primary]
-            return {
-                "simulated": True,
-                "has_incident": True,
-                "root_cause": primary,
-                "root_cause_name": DEVICE_FRIENDLY_NAMES.get(primary, primary),
-                "root_cause_status": self.devices[primary].status,
-                "victims": victims,
-                "victim_names": [DEVICE_FRIENDLY_NAMES.get(v, v) for v in victims],
-                "confidence": 0.75,
-                "explanation": f"Multiple independent issues detected. Primary focus is {primary}.",
-                "spoken": f"I see multiple devices with issues. The primary one appears to be your {DEVICE_FRIENDLY_NAMES.get(primary, primary).replace(' (Simulated)', '')}.",
-            }
+        """Perform explainable bilingual root-cause analysis (RCA)."""
+        res = self.diagnosis_engine.analyze(
+            devices={k: v.to_dict() for k, v in self.devices.items()},
+            get_downstream_fn=self.get_downstream_descendants,
+        )
+        return res.to_dict()
 
     def estimate_fix_impact(self, target_device: str, action: str = "restart") -> dict[str, Any]:
         """Estimate outage impact when performing a simulated fix action."""
@@ -376,11 +446,16 @@ class HomeGuardEngine:
             ),
         }
 
+    def _state_fingerprint(self) -> str:
+        return self.repair_engine.generate_state_fingerprint(
+            {k: v.to_dict() for k, v in self.devices.items()}
+        )
+
     def propose_fix(
         self,
         incident_id: str | None = None,
         simulate_verification_failure: bool = False,
-        actor: ActorType = "system",
+        actor: ActorType | str = "system",
     ) -> dict[str, Any]:
         """Propose a fix for the current root cause, calculate impact, and require confirmation."""
         diag = self.diagnose_home()
@@ -391,6 +466,7 @@ class HomeGuardEngine:
                 "state": "NO_INCIDENT",
                 "message": "No issues detected. No fix needed.",
                 "spoken": "Your home is all good. No repairs are needed.",
+                "spoken_hindi": "सब कुछ सामान्य रूप से काम कर रहा है। किसी मरम्मत की आवश्यकता नहीं है।",
             }
 
         target_device = diag["root_cause"]
@@ -401,6 +477,18 @@ class HomeGuardEngine:
             incident_id = f"inc-{uuid.uuid4().hex[:6]}"
 
         effective_sim_failure = simulate_verification_failure or self.active_fail_verification
+        state_fingerprint = self._state_fingerprint()
+
+        plan = self.repair_engine.create_proposal(
+            incident_id=incident_id,
+            target_device=target_device,
+            friendly_target=DEVICE_FRIENDLY_NAMES.get(target_device, target_device),
+            action=action,
+            affected_devices=impact["affected_devices"],
+            affected_names=impact["affected_device_names"],
+            state_fingerprint=state_fingerprint,
+        )
+        self.proposals[plan.proposal_id] = plan
 
         incident = Incident(
             incident_id=incident_id,
@@ -409,24 +497,25 @@ class HomeGuardEngine:
             impact=impact,
             state="PROPOSED",
             simulate_verification_failure=effective_sim_failure,
+            expires_at=plan.expires_at,
+            state_fingerprint=state_fingerprint,
+            proposal_id=plan.proposal_id,
         )
         self.incidents[incident_id] = incident
-
-        spoken = (
-            f"I recommend restarting your {impact['affected_device_names'][0].replace(' (Simulated)', '')}. "
-            f"This will briefly disconnect {len(impact['affected_devices'])} devices for about {impact['duration_seconds']} seconds. "
-            "Should I go ahead with the restart?"
-        )
 
         result = {
             "simulated": True,
             "incident_id": incident_id,
+            "proposal_id": plan.proposal_id,
             "target_device": target_device,
             "action": action,
             "state": "PROPOSED",
             "impact": impact,
             "confirmation_required": True,
-            "spoken": spoken,
+            "safer_alternatives": plan.safer_alternatives,
+            "expires_at": plan.expires_at,
+            "spoken": plan.spoken,
+            "spoken_hindi": plan.spoken_hindi,
         }
 
         self._log_action(actor=actor, action="propose_fix", target=incident_id, result=result)
@@ -436,9 +525,10 @@ class HomeGuardEngine:
         self,
         incident_id: str,
         user_confirmed: bool,
-        actor: ActorType = "user_voice",
+        actor: ActorType | str = "user_voice",
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Execute a fix only if user explicitly confirmed and propose_fix was called first."""
+        """Execute fix only if confirmed, proposal active, unexpired, and state unmodified."""
         if incident_id not in self.incidents:
             result = {
                 "simulated": True,
@@ -465,6 +555,32 @@ class HomeGuardEngine:
             self._log_action(actor=actor, action="approve_fix_refused", target=incident_id, result=result)
             return result
 
+        if incident.expires_at and datetime.now(timezone.utc) >= datetime.fromisoformat(incident.expires_at):
+            incident.state = "REJECTED"
+            result = {
+                "simulated": True,
+                "incident_id": incident_id,
+                "executed": False,
+                "error": "PROPOSAL_EXPIRED",
+                "message": "Cannot approve fix: the proposal has expired. Request a fresh diagnosis.",
+                "spoken": "That repair proposal has expired, so I did not make any changes.",
+            }
+            self._log_action(actor=actor, action="approve_fix_refused", target=incident_id, result=result)
+            return result
+
+        if incident.state_fingerprint and incident.state_fingerprint != self._state_fingerprint():
+            incident.state = "REJECTED"
+            result = {
+                "simulated": True,
+                "incident_id": incident_id,
+                "executed": False,
+                "error": "STALE_PROPOSAL",
+                "message": "Cannot approve fix: device state changed after diagnosis.",
+                "spoken": "The home changed while I was waiting. I did not run the old repair; please ask me to check again.",
+            }
+            self._log_action(actor=actor, action="approve_fix_refused", target=incident_id, result=result)
+            return result
+
         if not user_confirmed:
             incident.state = "REJECTED"
             result = {
@@ -478,39 +594,52 @@ class HomeGuardEngine:
             self._log_action(actor=actor, action="approve_fix_cancelled", target=incident_id, result=result)
             return result
 
-        # User confirmed and propose_fix was called: execute fix!
-        # Save snapshot of pre-fix state for rollback
-        incident.pre_fix_snapshot = {k: v.status for k, v in self.devices.items()}
-        incident.state = "EXECUTED"
+        # Concurrency Lock protection
+        if not self.repair_engine.acquire_repair_lock():
+            result = {
+                "simulated": True,
+                "incident_id": incident_id,
+                "executed": False,
+                "error": "CONCURRENT_REPAIR_IN_PROGRESS",
+                "message": "Another repair execution is currently in progress. Please wait.",
+                "spoken": "Another repair action is running right now. Please wait a moment.",
+            }
+            self._log_action(actor=actor, action="approve_fix_refused", target=incident_id, result=result)
+            return result
 
-        # Simulate restart execution:
-        # All devices temporarily restart and come back online
-        # (If simulate_verification_failure is set, verification step will simulate failure)
-        for d in self.devices.values():
-            d.status = "online"
+        try:
+            # Save snapshot of pre-fix state
+            incident.pre_fix_snapshot = {k: v.status for k, v in self.devices.items()}
+            incident.state = "EXECUTED"
+            incident.execution_id = f"job-{uuid.uuid4().hex[:12]}"
+            incident.approved_at = datetime.now(timezone.utc).isoformat()
 
-        result = {
-            "simulated": True,
-            "incident_id": incident_id,
-            "executed": True,
-            "target_device": incident.target_device,
-            "action": incident.action,
-            "message": f"Simulated {incident.action} executed on {incident.target_device}. Ready for verification.",
-            "spoken": f"I've restarted your {DEVICE_FRIENDLY_NAMES[incident.target_device].replace(' (Simulated)', '')}. Checking if everything stabilizes.",
-        }
-        self._log_action(actor=actor, action="execute_fix", target=incident_id, result=result)
-        return result
+            for d in self.devices.values():
+                self._set_status(d.id, "online")
+            self._record_health_snapshot()
+
+            result = {
+                "simulated": True,
+                "incident_id": incident_id,
+                "executed": True,
+                "target_device": incident.target_device,
+                "action": incident.action,
+                "execution_id": incident.execution_id,
+                "message": f"Simulated {incident.action} executed on {incident.target_device}. Ready for verification.",
+                "spoken": f"I've restarted your {DEVICE_FRIENDLY_NAMES[incident.target_device].replace(' (Simulated)', '')}. Checking if everything stabilizes.",
+            }
+            self._log_action(actor=actor, action="execute_fix", target=incident_id, result=result)
+            return result
+        finally:
+            self.repair_engine.release_repair_lock()
 
     def verify_fix(
         self,
         incident_id: str,
         consecutive_ticks: int = 3,
-        actor: ActorType = "system",
+        actor: ActorType | str = "system",
     ) -> dict[str, Any]:
-        """Verify stabilization across N consecutive ticks (default N=3).
-
-        If verification fails (e.g. In the simulated failure scenario), auto-rollback triggers.
-        """
+        """Verify stabilization across consecutive ticks with automated rollback on failure."""
         if incident_id not in self.incidents:
             return {
                 "simulated": True,
@@ -522,13 +651,9 @@ class HomeGuardEngine:
 
         incident = self.incidents[incident_id]
 
-        # Check self-checking demo failure simulation
         if incident.simulate_verification_failure:
-            # Simulate a failure on tick 2
             incident.verification_ticks_passed = 1
-            # Dropped back offline
-            self.devices[incident.target_device].status = "offline"
-            # Auto-rollback triggers!
+            self._set_status(incident.target_device, "offline")
             rollback_result = self.rollback_fix(incident_id, actor="system", auto=True)
             spoken = (
                 f"Verification failed on tick 2: {DEVICE_FRIENDLY_NAMES[incident.target_device].replace(' (Simulated)', '')} "
@@ -543,14 +668,13 @@ class HomeGuardEngine:
                 "auto_rollback": True,
                 "rollback_details": rollback_result,
                 "spoken": spoken,
+                "manual_next_step": f"Please physically power cycle the {incident.target_device} power adapter.",
             }
             self._log_action(actor=actor, action="verify_fix_failed_auto_rollback", target=incident_id, result=result)
             return result
 
-        # Normal verification across consecutive ticks
         passed_ticks = 0
         for _ in range(consecutive_ticks):
-            # Check every device is healthy
             if all(d.status == "online" for d in self.devices.values()):
                 passed_ticks += 1
             else:
@@ -575,7 +699,6 @@ class HomeGuardEngine:
             self._log_action(actor=actor, action="verify_fix_success", target=incident_id, result=result)
             return result
         else:
-            # Verification failed without explicit simulate flag: trigger auto rollback
             rollback_result = self.rollback_fix(incident_id, actor="system", auto=True)
             result = {
                 "simulated": True,
@@ -593,7 +716,7 @@ class HomeGuardEngine:
     def rollback_fix(
         self,
         incident_id: str,
-        actor: ActorType = "system",
+        actor: ActorType | str = "system",
         auto: bool = False,
     ) -> dict[str, Any]:
         """Restore device states from pre-fix snapshot."""
@@ -616,11 +739,11 @@ class HomeGuardEngine:
                 "spoken": "There is no previous snapshot to restore for this incident.",
             }
 
-        # Restore snapshot
         for dev_id, status in incident.pre_fix_snapshot.items():
             if dev_id in self.devices:
-                self.devices[dev_id].status = status
+                self._set_status(dev_id, status)
 
+        self._record_health_snapshot()
         incident.state = "ROLLED_BACK"
         action_name = "auto_rollback_fix" if auto else "rollback_fix"
         spoken = "I have rolled back the fix and restored your devices to their previous state."
@@ -638,3 +761,22 @@ class HomeGuardEngine:
     def get_audit_log(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent audit log entries."""
         return [entry.to_dict() for entry in self.audit_log[-limit:]]
+
+    def get_incident_report(self, incident_id: str) -> dict[str, Any]:
+        """Return a complete, export-friendly lifecycle record for an incident."""
+        incident = self.incidents.get(incident_id)
+        if incident is None:
+            raise ValueError(f"Incident '{incident_id}' not found")
+        events = [
+            event for event in self.get_audit_log(limit=len(self.audit_log))
+            if event["target"] == incident_id
+        ]
+        return {
+            "report_version": "2.0-pro",
+            "simulated": True,
+            "incident": incident.to_dict(),
+            "events": events,
+            "before_state": incident.pre_fix_snapshot,
+            "after_state": {device_id: device.status for device_id, device in self.devices.items()},
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }

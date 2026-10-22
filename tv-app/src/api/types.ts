@@ -8,6 +8,13 @@ export interface DeviceInfo {
   simulated: boolean;
   upstream: string[];
   downstream: string[];
+  last_seen?: string;
+  health_metrics?: {
+    latency_ms: number;
+    packet_loss_pct: number;
+    reconnects_24h: number;
+    uptime_pct: number;
+  };
 }
 
 export interface DiagnosisInfo {
@@ -19,6 +26,14 @@ export interface DiagnosisInfo {
   victims: string[];
   victim_names: string[];
   confidence: number;
+  confidence_label?: 'low' | 'medium' | 'high';
+  evidence?: string[];
+  candidates?: Array<{
+    device_id: string;
+    name: string;
+    confidence: number;
+    evidence: string[];
+  }>;
   summary: string;
   explanation: string;
   spoken: string;
@@ -63,6 +78,10 @@ export interface IncidentInfo {
   state: 'PROPOSED' | 'EXECUTED' | 'RESOLVED' | 'REJECTED' | 'ROLLED_BACK';
   pre_fix_snapshot?: Record<string, string>;
   impact: FixImpact;
+  expires_at?: string;
+  state_fingerprint?: string;
+  execution_id?: string;
+  approved_at?: string;
 }
 
 export interface SystemStatusResponse {
