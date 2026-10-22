@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.vscode
+.idea
+tv-app/node_modules
+tv-app/dist
+audit_log.jsonl
+*.md
+!README.md

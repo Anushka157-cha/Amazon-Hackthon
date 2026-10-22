@@ -18,13 +18,35 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from contextlib import asynccontextmanager
+
 from homeguard.core import VALID_ACTIONS, VALID_DEVICES
 from homeguard.mcp_server import default_engine, default_mcp_server
+
+# Mount the MCP server Streamable-HTTP ASGI app (sub-app path='/')
+try:
+    mcp_asgi = default_mcp_server.streamable_http_app(streamable_http_path="/")
+except Exception as e:
+    mcp_asgi = None
+    print(f"Warning: Could not create streamable_http_app: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager that starts the MCP server session manager loop."""
+    session_mgr = getattr(default_mcp_server._lowlevel_server, "_session_manager", None)
+    if session_mgr:
+        async with session_mgr.run():
+            yield
+    else:
+        yield
+
 
 app = FastAPI(
     title="HomeGuard: The Smart Home That Explains Itself",
     description="Dependency graph RCA, impact estimation, and voice-controlled safe remediation for smart homes (Simulated).",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Enable CORS for local development and client integrations
@@ -36,15 +58,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount the MCP server Streamable-HTTP ASGI app
-try:
-    mcp_asgi = default_mcp_server.streamable_http_app()
+if mcp_asgi is not None:
     app.mount("/mcp", mcp_asgi)
-except Exception as e:
-    print(f"Warning: Could not mount streamable_http_app: {e}")
 
 
-@app.get("/mcp")
+@app.get("/api/mcp-info")
 def get_mcp_status() -> dict[str, Any]:
     """Return status and tool list when visited by a web browser."""
     return {
@@ -65,6 +83,10 @@ def get_mcp_status() -> dict[str, Any]:
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
+TV_DIR = Path(__file__).resolve().parent.parent / "tv-app" / "dist"
+
+if TV_DIR.exists():
+    app.mount("/tv", StaticFiles(directory=str(TV_DIR), html=True), name="tv")
 
 
 class InjectFailureRequest(BaseModel):

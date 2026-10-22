@@ -22,7 +22,7 @@ import './styles/tv.css';
 
 type FocusTarget =
   | { type: 'device'; id: string }
-  | { type: 'button'; id: 'approve' | 'cancel' | 'undo' | 'inject' };
+  | { type: 'button'; id: 'approve' | 'cancel' | 'undo' | 'inject' | 'clear' };
 
 export const App: React.FC = () => {
   // State
@@ -142,6 +142,18 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleClearFailures = async () => {
+    try {
+      await clearFailures();
+      setStatusMessage('All simulated outages cleared. All 5 devices online.');
+      setShowUndo(false);
+      setFocus({ type: 'button', id: 'inject' });
+      await pollBackend();
+    } catch (err: any) {
+      setStatusMessage(`Error clearing outages: ${err.message}`);
+    }
+  };
+
   // Spatial Navigation D-Pad Handler
   const handleDpad = useCallback(
     (action: 'up' | 'down' | 'left' | 'right' | 'select' | 'back') => {
@@ -151,6 +163,7 @@ export const App: React.FC = () => {
           else if (focus.id === 'cancel') handleCancel();
           else if (focus.id === 'undo') handleUndo();
           else if (focus.id === 'inject') handleInjectTestFailure();
+          else if (focus.id === 'clear') handleClearFailures();
         }
         return;
       }
@@ -184,6 +197,7 @@ export const App: React.FC = () => {
         if (action === 'left') {
           if (current.type === 'button') {
             if (current.id === 'cancel') return { type: 'button', id: 'approve' };
+            if (current.id === 'clear') return { type: 'button', id: 'inject' };
             if (current.id === 'inject' && hasUndo) return { type: 'button', id: 'undo' };
           } else if (current.type === 'device') {
             if (['ring_doorbell', 'fire_tv', 'echo_speaker'].includes(current.id)) {
@@ -199,6 +213,7 @@ export const App: React.FC = () => {
           if (current.type === 'button') {
             if (current.id === 'approve') return { type: 'button', id: 'cancel' };
             if (current.id === 'undo') return { type: 'button', id: 'inject' };
+            if (current.id === 'inject') return { type: 'button', id: 'clear' };
           } else if (current.type === 'device') {
             if (current.id === 'router') {
               return { type: 'device', id: 'wifi_extender' };
@@ -212,7 +227,7 @@ export const App: React.FC = () => {
         return current;
       });
     },
-    []
+    [handleApprove, handleCancel, handleUndo]
   );
 
   // Keyboard navigation for TV remotes / browser testing
@@ -273,7 +288,7 @@ export const App: React.FC = () => {
       {/* Fix Card & Action Buttons */}
       <FixCard
         proposal={proposal}
-        focusedButton={focus.type === 'button' ? focus.id : null}
+        focusedButton={focus.type === 'button' ? (focus.id as any) : null}
         isExecuting={isExecuting}
         statusMessage={statusMessage}
         showUndo={showUndo}
@@ -281,6 +296,7 @@ export const App: React.FC = () => {
         onCancel={handleCancel}
         onUndo={handleUndo}
         onInjectTestFailure={handleInjectTestFailure}
+        onClearFailures={handleClearFailures}
       />
 
       {/* Footer / Remote Guide */}

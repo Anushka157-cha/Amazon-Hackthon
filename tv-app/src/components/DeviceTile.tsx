@@ -35,6 +35,10 @@ export const DeviceTile: React.FC<DeviceTileProps> = ({
   const icon = DEVICE_ICONS[device.id] || '⚡';
   const label = DEVICE_LABELS[device.id] || device.name;
   const statusClass = device.status;
+  const displayStatus =
+    device.status === 'degraded'
+      ? 'BUFFERING'
+      : device.status.toUpperCase();
 
   return (
     <div
@@ -53,7 +57,7 @@ export const DeviceTile: React.FC<DeviceTileProps> = ({
       <div className="device-name">{label}</div>
 
       <div className={`device-status-badge status-${statusClass}`}>
-        {device.status.toUpperCase()}
+        {displayStatus}
       </div>
     </div>
   );

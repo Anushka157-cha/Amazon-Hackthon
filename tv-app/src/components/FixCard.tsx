@@ -3,7 +3,7 @@ import { ProposalInfo } from '../api/types';
 
 interface FixCardProps {
   proposal: ProposalInfo | null;
-  focusedButton: 'approve' | 'cancel' | 'undo' | 'inject' | null;
+  focusedButton: 'approve' | 'cancel' | 'undo' | 'inject' | 'clear' | null;
   isExecuting: boolean;
   statusMessage: string | null;
   showUndo: boolean;
@@ -11,6 +11,7 @@ interface FixCardProps {
   onCancel: () => void;
   onUndo: () => void;
   onInjectTestFailure: () => void;
+  onClearFailures: () => void;
 }
 
 export const FixCard: React.FC<FixCardProps> = ({
@@ -23,6 +24,7 @@ export const FixCard: React.FC<FixCardProps> = ({
   onCancel,
   onUndo,
   onInjectTestFailure,
+  onClearFailures,
 }) => {
   const hasProposal = proposal?.has_proposal ?? false;
   const tier = proposal?.tier || 'MEDIUM';
@@ -105,6 +107,14 @@ export const FixCard: React.FC<FixCardProps> = ({
               onClick={onInjectTestFailure}
             >
               <span>⚡ Test Outage (Drop Extender)</span>
+            </button>
+
+            <button
+              type="button"
+              className={`tv-btn tv-btn-secondary ${focusedButton === 'clear' ? 'focused' : ''}`}
+              onClick={onClearFailures}
+            >
+              <span>✨ Clear Outages</span>
             </button>
           </div>
         </div>
