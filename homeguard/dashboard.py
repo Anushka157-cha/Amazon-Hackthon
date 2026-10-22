@@ -25,7 +25,12 @@ from homeguard.mcp_server import default_engine, default_mcp_server
 
 # Mount the MCP server Streamable-HTTP ASGI app (sub-app path='/')
 try:
-    mcp_asgi = default_mcp_server.streamable_http_app(streamable_http_path="/")
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+        sec = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+        mcp_asgi = default_mcp_server.streamable_http_app(streamable_http_path="/", transport_security=sec)
+    except Exception:
+        mcp_asgi = default_mcp_server.streamable_http_app(streamable_http_path="/")
 except Exception as e:
     mcp_asgi = None
     print(f"Warning: Could not create streamable_http_app: {e}")
