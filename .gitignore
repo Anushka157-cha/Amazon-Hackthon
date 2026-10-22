@@ -20,8 +20,9 @@ htmlcov/
 audit_log.jsonl
 *.log
 
-# IDE & OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+# Node / JavaScript (Fire TV App)
+node_modules/
+tv-app/node_modules/
+tv-app/dist/
+.expo/
+npm-debug.log*

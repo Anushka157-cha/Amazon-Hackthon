@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "HomeGuard TV",
+    "slug": "homeguard-tv",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "platforms": ["android", "web"],
+    "android": {
+      "package": "com.homeguard.tv",
+      "versionCode": 1,
+      "intentFilters": [
+        {
+          "action": "MAIN",
+          "category": ["LEANBACK_LAUNCHER"]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "@react-native-tvos/config-tv",
+        {
+          "isTV": true,
+          "androidTVBanner": "./assets/tv_banner.png"
+        }
+      ]
+    ],
+    "extra": {
+      "backendUrl": "http://10.0.2.2:8000",
+      "webBackendUrl": "http://127.0.0.1:8000"
+    }
+  }
+}

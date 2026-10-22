@@ -61,6 +61,7 @@ HomeGuard exposes a self-hosted **Model Context Protocol (MCP)** server built wi
 ```mermaid
 graph TD
     User(["🗣️ User (Voice)"]) --> Alexa["🎙️ Alexa+ Agent Client"]
+    UserTV(["🎮 User (TV Remote)"]) --> TVApp["📺 HomeGuard TV App\n(10-Foot Leanback UI :8082)"]
     
     subgraph "HomeGuard Unified Server (FastAPI + MCP)"
         MCP["🔌 MCP Server (Streamable-HTTP)\n/mcp"]
@@ -76,6 +77,7 @@ graph TD
     end
 
     Alexa <-->|MCP Tools Protocol| MCP
+    TVApp <-->|Live 2s Sync| API
     WebUI <-->|Live 1s Polling| API
     MCP --> RCA
     MCP --> Safety
@@ -211,15 +213,84 @@ demo\run_demo.bat
 
 ---
 
+## 📺 Fire TV App ("HomeGuard TV")
+
+HomeGuard includes a dedicated 10-foot living room application located in [`tv-app/`](tv-app/) designed following Amazon's official Fire TV starter sample conventions ([`react-native-multi-tv-app-sample`](https://github.com/AmazonAppDev/react-native-multi-tv-app-sample)).
+
+### 10-Foot Leanback UI Features
+- **High-Contrast TV Design**: Overscan safe area margins (48px), large readable typography (Outfit/Inter), and high-contrast color coding.
+- **Home Dependency Map**: Large visual tiles for `router`, `wifi_extender`, `ring_doorbell`, `fire_tv`, and `echo_speaker` with live status indicators and dependency flow.
+- **Header Badge**: Prominent `SIMULATED DEVICES` notice.
+- **Diagnosis Banner**: Single-line plain-language root cause explanation (`Your Wi-Fi extender is the cause. Ring, Fire TV and Echo are affected because of it.`).
+- **Fix & Safety Card**: Impact description, duration in seconds, safety tier, and focusable **[Approve Fix]** / **[Cancel]** buttons.
+- **Verification & Undo**: Multi-tick stabilization progress spinner and instant **[Undo Fix (Rollback)]** button.
+- **D-Pad Spatial Navigation**: Full remote control support (`▲ ▼ ◄ ►` navigation, `[SELECT / ENTER]` to confirm, `[BACK / ESC]` to cancel).
+- **Auto-Sync**: 2-second background polling against the unified FastAPI backend with graceful network error recovery.
+
+### Setup and Running the TV App
+
+#### 1. Install Dependencies
+```bash
+cd tv-app
+npm install
+```
+
+#### 2. Run in 10-Foot TV Mode (Browser / Dev Preview)
+```bash
+npm run dev
+```
+Open **[http://localhost:8082](http://localhost:8082)**. You can navigate the entire interface using your keyboard's arrow keys (`ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`), `Enter` (Select/Approve), and `Escape` (Back/Undo), or using the on-screen TV remote helper buttons.
+
+#### 3. Running on Fire TV Emulator / Physical Device Sideloading
+The app includes Android TV / Fire TV Leanback launcher configuration in [`tv-app/app.json`](tv-app/app.json):
+- **Android TV / Fire OS Emulator**:
+  ```bash
+  cd tv-app
+  npm run build
+  # For React Native TV / Expo TV native build:
+  # npx expo run:android
+  ```
+- **Sideloading via ADB to a Fire TV Stick / Fire TV Cube**:
+  1. Enable *Developer Options* and *ADB Debugging* on your Fire TV device (`Settings > My Fire TV > Developer Options`).
+  2. Connect to Fire TV over local Wi-Fi:
+     ```bash
+     adb connect <FIRE_TV_IP_ADDRESS>:5555
+     adb devices
+     ```
+  3. Install the APK:
+     ```bash
+     adb install -r <path-to-tv-app-apk>
+     ```
+
+> **Testing Environment Notice**: The TV application was tested and verified in 10-foot TV resolution mode with complete D-pad spatial navigation, focus handling, and API integration. **All smart home devices (Router, Wi-Fi Extender, Ring, Fire TV, Echo) are simulated in memory; the Fire TV application itself is a real interactive frontend.**
+
+---
+
+## 🎙️ + 📺 Voice & TV Together (Dual-Channel Demo)
+
+Both Alexa+ (voice via MCP) and HomeGuard TV (screen via REST API) share the exact same singleton in-memory state engine.
+
+1. **Ask Alexa+**: *"Alexa, what's wrong with my home?"*
+2. **TV Updates Simultaneously**: HomeGuard TV displays the diagnosis banner and highlights the Wi-Fi Extender as the root cause.
+3. **Confirm by Voice OR Remote**:
+   - Voice: Say *"Alexa, yes, do it"*
+   - Remote: Press **[SELECT]** on the Fire TV remote
+4. **Live Verification**: TV displays the 3-tick stabilization check in real-time, then confirms *"Everything is back!"*.
+5. **Undo Anytime**: Say *"Alexa, undo that"* or press **[Undo Fix]** on the TV screen.
+
+👉 **See the complete step-by-step walkthrough script in [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md)**.
+
+---
+
 ## 🧪 Running the Tests
 
 HomeGuard includes a comprehensive pytest suite covering root cause analysis, approval safety gates, verification loops, auto-rollback, API endpoints, and the Alexa+ simulator:
 
 ```bash
-pytest -v
+.venv\Scripts\pytest -v
 ```
 
-All 25 tests pass in ~1.2 seconds.
+All **32 tests pass** cleanly in ~2 seconds.
 
 ---
 
@@ -234,22 +305,32 @@ amasdbd/
 ├── pyproject.toml            # Project packaging & pytest configuration
 ├── requirements.txt          # Pinned Python dependencies
 ├── docs/
-│   └── FEEDBACK.md           # Hackathon SDK feedback template (MCP, Alexa+, FastAPI)
+│   └── FEEDBACK.md           # Hackathon SDK feedback template (MCP, Alexa+, FastAPI, Fire TV)
 ├── homeguard/
 │   ├── __init__.py           # Package init
 │   ├── core.py               # Pure domain logic: dependency graph, RCA, fix flow, audit
 │   ├── mcp_server.py         # Official MCP Server (FastMCP, streamable-http)
 │   └── dashboard.py          # FastAPI application serving UI and mounting MCP server
+├── tv-app/                   # 📺 Fire TV 10-foot application (React Native / TV UI)
+│   ├── package.json          # TV app dependencies & scripts
+│   ├── app.json              # Fire TV Leanback & TVOS configuration
+│   ├── index.html            # TV web entrypoint
+│   └── src/
+│       ├── App.tsx           # Single-screen state machine & D-pad navigation
+│       ├── theme/colors.ts   # High-contrast 10-foot design tokens
+│       ├── api/client.ts     # 2s background polling & REST client
+│       └── components/       # TV Map, Diagnosis Banner, Fix Card, Remote Guide
 ├── static/
-│   └── index.html            # Single-page dashboard with SVG graph & live audit trail
+│   └── index.html            # Single-page web dashboard with live audit trail
 ├── demo/
 │   ├── alexa_sim.py          # Interactive Alexa+ voice agent CLI simulator
+│   ├── DEMO_SCRIPT.md        # Voice + TV dual-channel walkthrough script
 │   ├── run_demo.sh           # Unix automated demo launcher
 │   └── run_demo.bat          # Windows automated demo launcher
 └── tests/
     ├── test_core.py          # Tests for graph topology, RCA, and core fix flow
     ├── test_mcp.py           # Tests for MCP tools, safety refusal, and rollback
-    ├── test_dashboard.py     # Tests for FastAPI REST endpoints
+    ├── test_dashboard.py     # Tests for FastAPI REST endpoints (including TV API)
     └── test_alexa_sim.py     # Tests for voice phrase dispatch logic
 ```
 
