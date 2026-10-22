@@ -43,6 +43,26 @@ try:
 except Exception as e:
     print(f"Warning: Could not mount streamable_http_app: {e}")
 
+
+@app.get("/mcp")
+def get_mcp_status() -> dict[str, Any]:
+    """Return status and tool list when visited by a web browser."""
+    return {
+        "status": "online",
+        "service": "HomeGuard MCP Server",
+        "transport": "Streamable-HTTP",
+        "endpoint": "/mcp",
+        "tools": [
+            "home_status",
+            "diagnose_home",
+            "propose_fix",
+            "approve_fix",
+            "verify_fix",
+            "rollback_fix",
+        ],
+        "message": "Streamable-HTTP endpoint active for Alexa+ and MCP clients. For TV App, visit http://localhost:8082 or Dashboard at /",
+    }
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
 
@@ -364,12 +384,13 @@ def serve_dashboard():
 
 def run() -> None:
     """Entrypoint to run dashboard and MCP server together."""
-    host = os.getenv("HOMEGUARD_HOST", "127.0.0.1")
+    host = os.getenv("HOMEGUARD_HOST", "0.0.0.0")
     port = int(os.getenv("HOMEGUARD_PORT", "8000"))
     print(f"===========================================================")
     print(f"  HomeGuard Unified Server (FastAPI + MCP Server) Starting")
-    print(f"  Dashboard UI:   http://{host}:{port}/")
-    print(f"  MCP Endpoint:   http://{host}:{port}/mcp")
+    print(f"  Dashboard UI:   http://127.0.0.1:{port}/")
+    print(f"  LAN Access:     http://{host}:{port}/")
+    print(f"  MCP Endpoint:   http://127.0.0.1:{port}/mcp")
     print(f"  State:          Shared In-Memory Singleton")
     print(f"  SIMULATED:      ALL smart home devices are simulated")
     print(f"===========================================================")

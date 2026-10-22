@@ -6,10 +6,20 @@ import {
   SystemStatusResponse,
 } from './types';
 
-// Default to local backend at port 8000 (unified FastAPI server)
-const BACKEND_URL =
-  (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) ||
-  'http://127.0.0.1:8000';
+// Dynamically connect to the backend on the same host (supports localhost, 127.0.0.1, and LAN IP like 172.18.24.58)
+const getBackendUrl = (): string => {
+  if (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) {
+    return (window as any).__BACKEND_URL__;
+  }
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    const protocol = window.location.protocol || 'http:';
+    const host = window.location.hostname;
+    return `${protocol}//${host}:8000`;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+const BACKEND_URL = getBackendUrl();
 
 export async function fetchStatus(): Promise<SystemStatusResponse> {
   const res = await fetch(`${BACKEND_URL}/api/status`, {
