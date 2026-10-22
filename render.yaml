@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: homeguard-alexa
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m homeguard.dashboard
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: HOMEGUARD_HOST
+        value: 0.0.0.0
+      - key: HOMEGUARD_PORT
+        value: 10000
+      - key: HOMEGUARD_AUDIT_LOG_PATH
+        value: audit_log.jsonl

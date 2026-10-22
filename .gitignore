@@ -5,7 +5,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-dist/
+/dist/
 build/
 
 # Environment variables
@@ -23,6 +23,5 @@ audit_log.jsonl
 # Node / JavaScript (Fire TV App)
 node_modules/
 tv-app/node_modules/
-tv-app/dist/
 .expo/
 npm-debug.log*

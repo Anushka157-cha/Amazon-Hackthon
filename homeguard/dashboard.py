@@ -89,6 +89,15 @@ if TV_DIR.exists():
     app.mount("/tv", StaticFiles(directory=str(TV_DIR), html=True), name="tv")
 
 
+@app.get("/tv")
+def serve_tv():
+    """Serve the TV app index.html directly."""
+    tv_index = TV_DIR / "index.html"
+    if tv_index.exists():
+        return FileResponse(tv_index)
+    return HTMLResponse("<h1>TV App: tv-app/dist/index.html not found</h1>", status_code=404)
+
+
 class InjectFailureRequest(BaseModel):
     device_id: str = "wifi_extender"
     mode: str = "offline"
@@ -407,7 +416,7 @@ def serve_dashboard():
 def run() -> None:
     """Entrypoint to run dashboard and MCP server together."""
     host = os.getenv("HOMEGUARD_HOST", "0.0.0.0")
-    port = int(os.getenv("HOMEGUARD_PORT", "8000"))
+    port = int(os.getenv("PORT", os.getenv("HOMEGUARD_PORT", "8000")))
     print(f"===========================================================")
     print(f"  HomeGuard Unified Server (FastAPI + MCP Server) Starting")
     print(f"  Dashboard UI:   http://127.0.0.1:{port}/")
